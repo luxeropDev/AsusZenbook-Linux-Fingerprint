@@ -1,0 +1,39 @@
+# Сборка upstream libfprint с дополнительным PID ELAN для драйвера 'elan'.
+# Применять ТОЛЬКО если detect.sh показал PID вне таблиц elan/elanmoc.
+# Использование: ELAN_PID=0c4c makepkg -si
+pkgname=libfprint-elan-extra-pid
+pkgver=1.94.100
+pkgrel=1
+pkgdesc="libfprint with additional ELAN PID bound to the 'elan' image driver"
+arch=(x86_64)
+url="https://gitlab.freedesktop.org/libfprint/libfprint"
+license=(LGPL-2.1-or-later)
+depends=(glib2 libgusb libgudev nss pixman cairo)
+makedepends=(git meson gobject-introspection)
+checkdepends=(umockdev python-gobject python-cairo)
+provides=(libfprint libfprint-2.so)
+conflicts=(libfprint)
+source=("git+$url.git#tag=v$pkgver" add-elan-pid.sh make-mock-variant.sh)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+: "${ELAN_PID:?Задайте ELAN_PID, напр. ELAN_PID=0c4c}"
+: "${ELAN_QUIRK:=ELAN_ALL_DEV}"
+
+prepare() {
+  bash add-elan-pid.sh libfprint "$ELAN_PID" "$ELAN_QUIRK"
+  bash make-mock-variant.sh libfprint "$ELAN_PID" >/dev/null
+}
+build() {
+  arch-meson libfprint build -Ddoc=false -Dgtk-examples=false
+  meson compile -C build
+}
+check() {
+  meson test -C build --print-errorlogs elan elan-cobo
+  # Привязка драйвера к новому PID (эмуляция):
+  ( cd build && FP_DEVICE_EMULATION=1 FP_DRIVERS_ALLOWLIST=elan \
+    LD_LIBRARY_PATH=$PWD/libfprint GI_TYPELIB_PATH=$PWD/libfprint \
+    MESON_SOURCE_ROOT=$srcdir/libfprint MESON_BUILD_ROOT=$PWD \
+    python "$srcdir/libfprint/tests/umockdev-test.py" "$srcdir/libfprint/tests/elan-$ELAN_PID" --test capture )
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+}
